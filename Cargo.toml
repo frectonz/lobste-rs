@@ -10,3 +10,10 @@ color-eyre = "0.6"
 tui = "0.19"
 crossterm = "0.25"
 open = "4.1.0"
+
+[profile.release]
+strip = true
+opt-level = "z"  # Optimize for size.
+lto = true
+codegen-units = 1
+panic = "abort"
