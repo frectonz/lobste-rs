@@ -223,12 +223,15 @@ impl App {
                         }
                     }
                     KeyCode::Right => {
-                        self.page += 1;
-                        self.stories = self
-                            .client
-                            .get(format!("https://lobste.rs/newest/page/{}.json", self.page))
-                            .send()?
-                            .json()?;
+                        // breaks after page 5
+                        if self.page < 5 {
+                            self.page += 1;
+                            self.stories = self
+                                .client
+                                .get(format!("https://lobste.rs/newest/page/{}.json", self.page))
+                                .send()?
+                                .json()?;
+                        }
                     }
                     KeyCode::Left => {
                         if self.page > 1 {
