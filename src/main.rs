@@ -45,6 +45,73 @@ pub struct Story {
     pub tags: Vec<String>,
 }
 
+impl Story {
+    fn url(&self) -> &str {
+        if self.url.is_empty() {
+            &self.short_id_url
+        } else {
+            &self.url
+        }
+    }
+
+    fn url_span(&self) -> text::Span {
+        text::Span::styled(
+            self.url(),
+            Style::default()
+                .fg(tui::style::Color::Blue)
+                .add_modifier(tui::style::Modifier::UNDERLINED),
+        )
+    }
+
+    fn title_span(&self, selected: bool) -> text::Span {
+        text::Span::styled(
+            &self.title,
+            Style::default()
+                .add_modifier(Modifier::BOLD)
+                .fg(if selected {
+                    tui::style::Color::Green
+                } else {
+                    tui::style::Color::White
+                }),
+        )
+    }
+
+    fn score_span(&self) -> text::Span {
+        text::Span::styled(
+            format!("⧋ {: <4}", self.score),
+            Style::default().fg(tui::style::Color::Yellow),
+        )
+    }
+}
+
+struct StoryWidget<'a> {
+    story: &'a Story,
+    selected: bool,
+}
+
+impl<'a> StoryWidget<'a> {
+    fn new((story, selected): (&'a Story, bool)) -> Self {
+        Self { story, selected }
+    }
+}
+
+impl<'a> Into<ListItem<'a>> for StoryWidget<'a> {
+    fn into(self) -> ListItem<'a> {
+        let selected_indicator = if self.selected { "► " } else { "  " };
+
+        let span = text::Spans::from(vec![
+            selected_indicator.into(),
+            self.story.score_span(),
+            " ".into(),
+            self.story.title_span(self.selected),
+            " ".into(),
+            self.story.url_span(),
+        ]);
+
+        ListItem::new(span)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubmitterUser {
@@ -97,6 +164,7 @@ struct App {
     stories: Stories,
     terminal: Terminal<CrosstermBackend<io::Stdout>>,
     selected_story_index: usize,
+    page: usize,
 }
 
 impl App {
@@ -104,14 +172,14 @@ impl App {
         let client = Client::builder().build()?;
         let terminal = App::init_screen()?;
 
-        let mut stories: Stories = client.get("https://lobste.rs/newest.json").send()?.json()?;
-        stories.sort_by(|a, b| b.score.cmp(&a.score));
+        let stories: Stories = client.get("https://lobste.rs/newest.json").send()?.json()?;
 
         Ok(Self {
             client,
             stories,
             terminal,
             selected_story_index: 0,
+            page: 1,
         })
     }
 
@@ -123,79 +191,76 @@ impl App {
 
     fn run(&mut self) -> Result<()> {
         loop {
-            self.terminal
-                .draw(|f| Self::draw_stories(f, &self.stories, self.selected_story_index))?;
+            self.terminal.draw(|f| {
+                Self::draw_stories(f, &self.stories, self.selected_story_index, self.page)
+            })?;
 
             if let Event::Key(key) = event::read()? {
-                if let KeyCode::Char('q') = key.code {
-                    return Ok(());
-                } else if KeyCode::Down == key.code {
-                    self.selected_story_index =
-                        if self.selected_story_index == self.stories.len() - 1 {
-                            0
+                match key.code {
+                    KeyCode::Char('q') => {
+                        return Ok(());
+                    }
+                    KeyCode::Down => {
+                        self.selected_story_index =
+                            if self.selected_story_index == self.stories.len() - 1 {
+                                0
+                            } else {
+                                self.selected_story_index + 1
+                            };
+                    }
+                    KeyCode::Up => {
+                        self.selected_story_index = if self.selected_story_index == 0 {
+                            self.stories.len() - 1
                         } else {
-                            self.selected_story_index + 1
+                            self.selected_story_index - 1
                         };
-                } else if KeyCode::Up == key.code {
-                    self.selected_story_index = if self.selected_story_index == 0 {
-                        self.stories.len() - 1
-                    } else {
-                        self.selected_story_index - 1
-                    };
-                } else if KeyCode::Enter == key.code {
-                    if let Some(story) = self.stories.get(self.selected_story_index) {
-                        if let Err(e) = open::that(story.url.as_str()) {
-                            eprintln!("Error opening url: {}", e);
+                    }
+                    KeyCode::Enter => {
+                        if let Some(story) = self.stories.get(self.selected_story_index) {
+                            if let Err(e) = open::that(story.url.as_str()) {
+                                eprintln!("Error opening url: {}", e);
+                            }
                         }
                     }
-                } else if KeyCode::Char('r') == key.code {
-                    self.stories = self
-                        .client
-                        .get("https://lobste.rs/newest.json")
-                        .send()?
-                        .json()?;
-                    self.stories.sort_by(|a, b| b.score.cmp(&a.score));
+                    KeyCode::Right => {
+                        self.page += 1;
+                        self.stories = self
+                            .client
+                            .get(format!("https://lobste.rs/newest/page/{}.json", self.page))
+                            .send()?
+                            .json()?;
+                    }
+                    KeyCode::Left => {
+                        if self.page > 1 {
+                            self.page -= 1;
+                            self.stories = self
+                                .client
+                                .get(format!("https://lobste.rs/newest/page/{}.json", self.page))
+                                .send()?
+                                .json()?;
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
     }
 
-    fn draw_stories<B: Backend>(f: &mut Frame<B>, stories: &Stories, index: usize) {
+    fn draw_stories<B: Backend>(f: &mut Frame<B>, stories: &Stories, index: usize, page: usize) {
         let items: Vec<ListItem> = stories
             .iter()
             .enumerate()
             .map(|(i, s)| (s, i == index))
-            .map(|(s, selected)| {
-                let title = text::Span::styled(
-                    &s.title,
-                    Style::default()
-                        .add_modifier(Modifier::BOLD)
-                        .fg(if selected {
-                            tui::style::Color::Green
-                        } else {
-                            tui::style::Color::White
-                        }),
-                );
-                let url = text::Span::styled(&s.url, Style::default().fg(tui::style::Color::Blue));
-
-                let span = text::Spans::from(vec![
-                    if selected { "► " } else { "  " }.into(),
-                    format!("⧋ {:3}   ", s.score).into(),
-                    title,
-                    " ".into(),
-                    url,
-                ]);
-
-                ListItem::new(span)
-            })
+            .map(StoryWidget::new)
+            .map(Into::into)
             .collect();
 
         let layout = tui::layout::Layout::default()
             .constraints(
                 [
                     tui::layout::Constraint::Percentage(30),
-                    tui::layout::Constraint::Percentage(60),
-                    tui::layout::Constraint::Length(3),
+                    tui::layout::Constraint::Percentage(65),
+                    tui::layout::Constraint::Percentage(5),
                 ]
                 .as_ref(),
             )
@@ -208,9 +273,25 @@ impl App {
         let items = List::new(items).block(Block::default());
         f.render_widget(items, layout[1]);
 
-        let help = Paragraph::new(text::Text::raw(
-            "↑/↓: Navigate, Enter: Open in browser, q: Quit, r: Refresh",
-        ));
+        let help = Paragraph::new(vec![
+            vec![
+                text::Span::styled(
+                    format!("{} stories ", stories.len()),
+                    Style::default()
+                        .fg(tui::style::Color::Blue)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                "on page ".into(),
+                text::Span::styled(
+                    page.to_string(),
+                    Style::default()
+                        .fg(tui::style::Color::Blue)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]
+            .into(),
+            "↑/↓: Navigate, Enter: Open in browser, q: Quit, ←/→: Navigate pages".into(),
+        ]);
         f.render_widget(help, layout[2]);
     }
 }
