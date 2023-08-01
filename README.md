@@ -30,3 +30,8 @@ If you are on linux or macOS, you can use the following command to extract the b
 ```bash
 tar xvf <downloaded_file>
 ```
+## Run it with Nix
+
+```bash
+nix run github:frectonz/lobste-rs
+````
