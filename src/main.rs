@@ -127,7 +127,7 @@ pub struct SubmitterUser {
     #[serde(rename = "avatar_url")]
     pub avatar_url: String,
     #[serde(rename = "invited_by_user")]
-    pub invited_by_user: String,
+    pub invited_by_user: Option<String>,
     #[serde(rename = "github_username")]
     pub github_username: Option<String>,
     #[serde(rename = "twitter_username")]
@@ -170,9 +170,16 @@ struct App {
 impl App {
     fn init() -> Result<Self> {
         let client = Client::builder().build()?;
-        let terminal = App::init_screen()?;
+        let mut terminal = App::init_screen()?;
 
-        let stories: Stories = client.get("https://lobste.rs/newest.json").send()?.json()?;
+        let stories: Stories = client
+            .get("https://lobste.rs/newest.json")
+            .send()?
+            .json()
+            .map_err(|e| {
+                reset_terminal(&mut terminal);
+                e
+            })?;
 
         Ok(Self {
             client,
@@ -299,25 +306,29 @@ impl App {
     }
 }
 
-impl Drop for App {
-    fn drop(&mut self) {
-        println!("Shutting down...");
+fn reset_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) {
+    println!("Shutting down...");
 
-        disable_raw_mode().expect("Could not disable raw mode");
-        execute!(
-            self.terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        )
-        .expect("Could not leave alternate screen");
-        self.terminal.show_cursor().expect("Could not show cursor");
+    disable_raw_mode().expect("Could not disable raw mode");
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )
+    .expect("Could not leave alternate screen");
+    terminal.show_cursor().expect("Could not show cursor");
 
-        println!("Goodbye!");
-    }
+    println!("Goodbye!");
 }
 
 fn main() -> Result<()> {
+    color_eyre::install()?;
     let mut app = App::init()?;
-    app.run()?;
+    app.run().map_err(|e| {
+        reset_terminal(&mut app.terminal);
+        e
+    })?;
+
+    reset_terminal(&mut app.terminal);
     Ok(())
 }
