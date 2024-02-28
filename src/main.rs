@@ -123,7 +123,7 @@ pub struct SubmitterUser {
     pub about: String,
     #[serde(rename = "is_moderator")]
     pub is_moderator: bool,
-    pub karma: i64,
+    pub karma: Option<i64>,
     #[serde(rename = "avatar_url")]
     pub avatar_url: String,
     #[serde(rename = "invited_by_user")]
